@@ -1,0 +1,16 @@
+# Normalise to LF in the repository and check out LF everywhere. The container
+# runs the shell scripts and Dockerfile directly; a CRLF checkout on Windows
+# breaks them with "no such file or directory" errors that point at the shebang.
+* text=auto eol=lf
+
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff  binary
+*.woff2 binary

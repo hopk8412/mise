@@ -1,0 +1,81 @@
+# Everything needed to run mise locally.
+#
+#   docker compose up
+#
+# Every value below has a working default, so no .env file is required. Copy
+# .env.example to .env to override any of them (that file is read automatically).
+name: mise
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mise}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mise}
+      POSTGRES_DB: ${POSTGRES_DB:-mise}
+    ports:
+      # Published so host tooling (prisma studio, psql, a GUI client) can reach
+      # it. 5432 is usually taken by a local PostgreSQL install; override with
+      # POSTGRES_HOST_PORT if 5433 is busy too. The app does not use this port.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mise} -d ${POSTGRES_DB:-mise}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      target: dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      # Inside the compose network the database is reachable as "db" on its own
+      # port, regardless of what it is published as on the host.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mise}:${POSTGRES_PASSWORD:-mise}@db:5432/${POSTGRES_DB:-mise}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-mise}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mise}
+      POSTGRES_DB: ${POSTGRES_DB:-mise}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      BETTER_AUTH_URL: ${APP_URL:-http://localhost:3000}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-only-secret-replace-this-before-deploying}
+      UPLOADS_DIR: /app/var/uploads
+      SEED_ON_START: ${SEED_ON_START:-true}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@mise.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-mise-admin-password}
+      ADMIN_NAME: ${ADMIN_NAME:-Site Admin}
+      # Docker Desktop on Windows and macOS does not forward filesystem events
+      # into the container, so the dev server has to poll to see your edits.
+      WATCHPACK_POLLING: "true"
+    # Turbopack's file watcher does not see bind-mount changes on Docker
+    # Desktop for Windows, even with polling configured; webpack's does. See
+    # docs/DEVELOPMENT.md.
+    command: ["npm", "run", "dev:docker"]
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      # Source is bind-mounted for hot reload.
+      - .:/app
+      # node_modules and .next are container-owned: the host copies are built
+      # for a different platform and would shadow the ones the image installed.
+      - node_modules:/app/node_modules
+      - next_cache:/app/.next
+      # Uploaded recipe images, kept out of the source tree so they survive
+      # rebuilds and are not accidentally committed.
+      - uploads:/app/var/uploads
+
+volumes:
+  pgdata:
+  node_modules:
+  next_cache:
+  uploads:
