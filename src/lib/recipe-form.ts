@@ -7,10 +7,21 @@ export type RecipeFormState = {
   formError?: string;
 };
 
-export type ParsedRecipeForm = { ok: true; data: RecipeData } | { ok: false; state: RecipeFormState };
+export type ParsedRecipeForm =
+  | {
+      ok: true;
+      data: RecipeData;
+      /** The chosen photo, or null when the file input was left empty (no change). */
+      image: File | null;
+      /** True when the form asked for the current photo to be cleared. */
+      removeImage: boolean;
+    }
+  | { ok: false; state: RecipeFormState };
 
 // A legitimate recipe is far smaller than this: the schema's own limits add up to well under 1 MB.
 const MAX_DATA_CHARS = 1_500_000;
+// The form has three fields; this leaves room for framework bookkeeping fields.
+const MAX_FORM_ENTRIES = 8;
 // Stops a hostile payload from producing an unbounded error response.
 const MAX_REPORTED_ISSUES = 50;
 
@@ -24,6 +35,34 @@ const ARRAY_LIMITS = [
 ] as const;
 
 /**
+ * Confirms the multipart body has the expected shape, so the raised body size limit cannot
+ * be used to push arbitrary files or a long list of fields through the action.
+ */
+function readExtraFields(
+  formData: FormData,
+): { image: File | null; removeImage: boolean } | null {
+  const entries = [...formData.entries()];
+  if (entries.length > MAX_FORM_ENTRIES) return null;
+
+  let image: File | null = null;
+  let removeImage = false;
+  for (const [name, value] of entries) {
+    if (typeof value !== "string") {
+      // The only file the form may carry is the one photo.
+      if (name !== "image" || image) return null;
+      // Browsers send an empty file when nothing was chosen.
+      if (value.size > 0) image = value;
+    } else if (name === "removeImage") {
+      removeImage = removeImage || value === "on";
+    } else if (name === "image") {
+      return null;
+    }
+  }
+  if (formData.getAll("data").length > 1) return null;
+  return { image, removeImage };
+}
+
+/**
  * Reads the `data` field of the recipe form and validates it. Never throws on bad input.
  *
  * Zod parses every array element before it applies the array's length limit, so an oversized
@@ -32,6 +71,9 @@ const ARRAY_LIMITS = [
  */
 export function parseRecipeForm(formData: unknown): ParsedRecipeForm {
   if (!(formData instanceof FormData)) return { ok: false, state: { formError: UNREADABLE } };
+
+  const extras = readExtraFields(formData);
+  if (!extras) return { ok: false, state: { formError: UNREADABLE } };
 
   const raw = formData.get("data");
   if (typeof raw !== "string" || raw.length > MAX_DATA_CHARS) {
@@ -59,7 +101,7 @@ export function parseRecipeForm(formData: unknown): ParsedRecipeForm {
   }
 
   const parsed = recipeInputSchema.safeParse(json);
-  if (parsed.success) return { ok: true, data: parsed.data };
+  if (parsed.success) return { ok: true, data: parsed.data, ...extras };
 
   const fieldErrors: Record<string, string[]> = {};
   let formError: string | undefined;
