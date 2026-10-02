@@ -18,7 +18,7 @@ comes next.
 | Phase | Title | Status | Completed |
 |---|---|---|---|
 | 0 | Scaffold and Docker foundation | Complete | 2026-09-12 |
-| 1 | Authentication | Not started | — |
+| 1 | Authentication | Complete | 2026-10-01 |
 | 2 | Recipe CRUD | Not started | — |
 | 3 | Browse and search | Not started | — |
 | 4 | Favorites | Not started | — |
@@ -64,7 +64,11 @@ comes next.
   omits some platform-specific transitive dependencies, which makes `npm ci`
   fail inside the image. Install dependencies through the container. See
   `docs/DEVELOPMENT.md`.
-- **Next 16 renamed `middleware.ts` to `proxy.ts`**, which is what Phase 1 will use.
+- **Next 16 renamed `middleware.ts` to `proxy.ts`**; Phase 1 uses `src/proxy.ts`.
+- **PostgreSQL publishes on host port 5435.** 5432 belongs to a local PostgreSQL
+  install and 5433/5434 to the `recipe-roost` stack in the neighbouring directory.
+  That stack also publishes 3000 under its `full` profile, so running both at once
+  needs `APP_PORT` set here as well.
 
 ---
 
@@ -74,22 +78,66 @@ comes next.
 
 ### Tasks
 
-- [ ] better-auth configured with the Prisma adapter, email/password, cookie sessions
-- [ ] `nextCookies()` and `admin()` plugins enabled
-- [ ] Auth models added to the Prisma schema; first migration generated
-- [ ] `/register`, `/login`, and sign-out
-- [ ] `src/proxy.ts` for optimistic redirects
-- [ ] Session helper for server components; authenticated route group guarded
-- [ ] Seed creates the initial administrator from `ADMIN_EMAIL` / `ADMIN_PASSWORD`
+- [x] better-auth configured with the Prisma adapter, email/password, cookie sessions
+- [x] `nextCookies()` and `admin()` plugins enabled
+- [x] `src/lib/auth.ts`, `src/lib/auth-client.ts`, and the `/api/auth/[...all]` handler
+- [x] Auth models added to the Prisma schema; first migration generated
+- [x] `prisma/seed.ts` — idempotent, upserts the administrator from `ADMIN_EMAIL` /
+      `ADMIN_PASSWORD` / `ADMIN_NAME`
+- [x] `/register`, `/login`, and sign-out
+- [x] `src/proxy.ts` for optimistic redirects
+- [x] Session helper for server components; authenticated route group guarded
 
 ### Verification
 
-- [ ] Register a new account, sign out, sign back in
-- [ ] Visiting a protected route while signed out redirects to `/login`
-- [ ] Visiting `/login` while signed in redirects away
-- [ ] The seeded administrator has the `admin` role
-- [ ] Session survives a browser refresh and a container restart
-- [ ] Registering with an address already in use fails with a readable message
+- [x] Register a new account, sign out, sign back in
+- [x] Visiting a protected route while signed out redirects to `/login`
+- [x] Visiting `/login` while signed in redirects away
+- [x] The seeded administrator has the `admin` role
+- [x] Session survives a browser refresh and a container restart
+- [x] Registering with an address already in use fails with a readable message
+
+### Decisions made during this phase
+
+- **Auth forms submit to server actions, not the client SDK.** `src/lib/actions/auth.ts`
+  calls `auth.api.signInEmail` / `signUpEmail` / `signOut` with the request headers;
+  `nextCookies()` writes the session cookie from inside the action. The forms validate
+  with the same Zod schemas (`src/lib/validation/auth.ts`) before submitting, and the
+  action validates again. `src/lib/auth-client.ts` stays available for client-side
+  session reads but nothing uses it yet.
+- **Where the session is checked.** `src/proxy.ts` only looks for the session cookie
+  (`getSessionCookie`) and redirects to `/login?next=…` when it is missing. It does not
+  validate the cookie, so it is never what grants access. `requireSession()` in
+  `src/lib/session.ts` does the real lookup and must be called in every page and
+  server action that needs a user — the `(app)` layout calls it too, but layouts do not
+  guard actions. `getSession()` is wrapped in React `cache`, so repeated calls in one
+  render cost one query.
+- **Adding a protected route means adding it to the proxy matcher** in `src/proxy.ts`
+  (currently only `/my-recipes`). Forgetting it is not a security hole — the page's own
+  `requireSession` still redirects — but the `?next=` return path is lost.
+- **`/login` and `/register` redirect away based on a validated session, in the page,
+  not in the proxy.** A cookie-only check there would trap someone holding an expired
+  cookie: the proxy would bounce them off `/login` while every protected page bounced
+  them back.
+- **`?next=` is restricted to same-site paths** by `safeNextPath` in
+  `src/lib/safe-redirect.ts` (rejects `//host`, `/\host`, absolute URLs, and loops back
+  to the auth pages). It is applied when the page renders and again in the action.
+- **Emails are lowercased and trimmed** by the shared schema before they reach
+  better-auth, so `Cook@Example.com` and `cook@example.com` are the same account.
+- **The seed re-asserts the admin role on every start.** If the `ADMIN_EMAIL` account
+  exists without the `admin` role, the seed grants it again. It never changes that
+  account's password. Phase 6's "revoke admin" guardrails should account for this —
+  revoking the seeded administrator lasts only until the next container start while
+  `SEED_ON_START=true`.
+- **Prisma models are `User`/`Session`/`Account`/`Verification` mapped to the lowercase
+  table names** better-auth expects. If the plugin set changes, compare the schema
+  against `getAuthTables` from `better-auth/db` (pass the same options as
+  `src/lib/auth.ts`) rather than using `@better-auth/cli`, whose latest release trails
+  the installed better-auth by three minor versions.
+- **`/my-recipes` exists as a placeholder** so there was a real protected route to
+  verify against. Phase 2 replaces its body.
+- **Fixed the sans-serif font.** `globals.css` mapped `--font-sans` to itself, so the
+  app rendered in the browser's serif fallback; it now points at Geist.
 
 ---
 
