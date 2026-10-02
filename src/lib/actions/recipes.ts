@@ -7,8 +7,10 @@ import type { Prisma, RecipeStatus } from "@/generated/prisma/client";
 import { canEditRecipe, canViewRecipe } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/session";
+import { checkImageUpload } from "@/lib/images";
 import { parseRecipeForm, type RecipeFormState } from "@/lib/recipe-form";
 import { createSlug } from "@/lib/slug";
+import { newRecipeImageKey, storage } from "@/lib/storage";
 import type { RecipeData } from "@/lib/validation/recipe";
 
 export type { RecipeFormState };
@@ -71,6 +73,45 @@ function stepRows(data: RecipeData) {
   return data.steps.map(({ text }, position) => ({ position, text }));
 }
 
+type PendingImage = { key: string; bytes: Uint8Array; contentType: string };
+
+/** Validates a chosen photo without writing anything. A null file means "no change". */
+async function checkImage(
+  image: File | null,
+): Promise<{ pending: PendingImage | null } | { state: RecipeFormState }> {
+  if (!image) return { pending: null };
+  const checked = await checkImageUpload(image);
+  if (!checked.ok) return { state: { fieldErrors: { image: [checked.error] } } };
+  return {
+    pending: {
+      key: newRecipeImageKey(checked.kind),
+      bytes: checked.bytes,
+      contentType: checked.kind.contentType,
+    },
+  };
+}
+
+/** Writes a validated photo to storage. Returns an error state when that fails. */
+async function writeImage(pending: PendingImage): Promise<RecipeFormState | null> {
+  try {
+    await storage.put(pending.key, pending.bytes, pending.contentType);
+    return null;
+  } catch (error) {
+    console.error("Saving an uploaded image failed", error);
+    return { fieldErrors: { image: ["The image could not be saved. Try again in a moment."] } };
+  }
+}
+
+/** Removes a stored photo that no recipe refers to any more. A failure leaves an orphan file, nothing worse. */
+async function discardImage(key: string | null | undefined): Promise<void> {
+  if (!key) return;
+  try {
+    await storage.delete(key);
+  } catch (error) {
+    console.error("Removing a stored image failed", error);
+  }
+}
+
 /**
  * Ends an action that touched a recipe the viewer may not change. A recipe they cannot see
  * is reported as missing so its existence is not revealed; one they can see (a published
@@ -92,7 +133,15 @@ export async function createRecipeAction(
 
   const parsed = parseRecipeForm(formData);
   if (!parsed.ok) return parsed.state;
-  const data = parsed.data;
+  const { data } = parsed;
+
+  const checked = await checkImage(parsed.image);
+  if ("state" in checked) return checked.state;
+  const pending = checked.pending;
+  if (pending) {
+    const failed = await writeImage(pending);
+    if (failed) return failed;
+  }
 
   let slug: string;
   try {
@@ -110,6 +159,7 @@ export async function createRecipeAction(
             cookMinutes: data.cookMinutes ?? null,
             sourceName: data.sourceName ?? null,
             sourceUrl: data.sourceUrl ?? null,
+            imageKey: pending?.key ?? null,
             authorId: session.user.id,
             ...publication(data.status, null),
             ingredients: { createMany: { data: ingredientRows(data) } },
@@ -122,6 +172,7 @@ export async function createRecipeAction(
     });
   } catch (error) {
     console.error("Creating a recipe failed", error);
+    await discardImage(pending?.key);
     return { formError: SAVE_FAILED };
   }
 
@@ -148,8 +199,18 @@ export async function updateRecipeAction(
 
   const parsed = parseRecipeForm(formData);
   if (!parsed.ok) return parsed.state;
-  const data = parsed.data;
+  const { data } = parsed;
 
+  const checked = await checkImage(parsed.image);
+  if ("state" in checked) return checked.state;
+  const pending = checked.pending;
+  if (pending) {
+    const failed = await writeImage(pending);
+    if (failed) return failed;
+  }
+
+  // The photo this edit replaces or clears, as read inside the transaction.
+  let previousKey: string | null = null;
   let missing = false;
   try {
     await withUniqueRetry(() =>
@@ -160,8 +221,9 @@ export async function updateRecipeAction(
         const current = await tx.recipe.update({
           where: { id: existing.id },
           data: { title: data.title },
-          select: { status: true, publishedAt: true },
+          select: { status: true, publishedAt: true, imageKey: true },
         });
+        previousKey = current.imageKey;
         const tagIds = await resolveTagIds(tx, data.tags);
 
         await tx.ingredient.deleteMany({ where: { recipeId: existing.id } });
@@ -178,6 +240,7 @@ export async function updateRecipeAction(
             sourceName: data.sourceName ?? null,
             sourceUrl: data.sourceUrl ?? null,
             ...publication(data.status, current),
+            ...(pending ? { imageKey: pending.key } : parsed.removeImage ? { imageKey: null } : {}),
             ingredients: { createMany: { data: ingredientRows(data) } },
             steps: { createMany: { data: stepRows(data) } },
             tags: { createMany: { data: tagIds.map((tagId) => ({ tagId })) } },
@@ -186,6 +249,7 @@ export async function updateRecipeAction(
       }),
     );
   } catch (error) {
+    await discardImage(pending?.key);
     // P2025: the recipe was deleted between the check above and the write.
     if (errorCode(error) === "P2025") {
       missing = true;
@@ -195,6 +259,9 @@ export async function updateRecipeAction(
     }
   }
   if (missing) notFound();
+
+  // Only now that the new state is committed is the old file safe to remove.
+  if (pending || parsed.removeImage) await discardImage(previousKey);
 
   revalidatePath(`/recipes/${existing.slug}`);
   revalidatePath("/my-recipes");
@@ -213,7 +280,11 @@ export async function deleteRecipeAction(recipeId: string): Promise<void> {
 
   try {
     // Ingredients, steps and tag links go with it through the foreign keys' cascade.
-    await prisma.recipe.delete({ where: { id: existing.id } });
+    const deleted = await prisma.recipe.delete({
+      where: { id: existing.id },
+      select: { imageKey: true },
+    });
+    await discardImage(deleted.imageKey);
   } catch (error) {
     // Already gone: the outcome the caller wanted.
     if (errorCode(error) !== "P2025") throw error;
