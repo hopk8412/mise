@@ -1,6 +1,7 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
+import { useState, useTransition } from "react";
 
 import {
   AlertDialog,
@@ -17,39 +18,50 @@ import { Button } from "@/components/ui/button";
 import { deleteRecipeAction } from "@/lib/actions/recipes";
 
 /**
- * Deleting asks for confirmation first. The form sits outside the dialog and the confirm
- * button points at it with the `form` attribute, so the submit still happens after the
- * dialog closes and unmounts its content.
+ * Deleting asks for confirmation first. The confirm button calls the delete action directly
+ * and keeps the dialog open, disabled and labelled "Deleting…", until the action redirects
+ * to the list.
  */
 export function DeleteRecipeButton({ recipeId, title }: { recipeId: string; title: string }) {
-  const formId = `delete-recipe-${recipeId}`;
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  function confirmDelete() {
+    startTransition(async () => {
+      await deleteRecipeAction(recipeId);
+    });
+  }
 
   return (
-    <>
-      <form id={formId} action={deleteRecipeAction.bind(null, recipeId)} className="hidden" />
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <Button type="button" variant="destructive" size="sm">
-            <Trash2 />
-            Delete
-          </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this recipe?</AlertDialogTitle>
-            <AlertDialogDescription>
-              &ldquo;{title}&rdquo; and its ingredients, steps and tags will be removed. This cannot
-              be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep recipe</AlertDialogCancel>
-            <AlertDialogAction type="submit" form={formId} variant="destructive">
-              Delete recipe
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+    <AlertDialog open={open} onOpenChange={(next) => (pending ? undefined : setOpen(next))}>
+      <AlertDialogTrigger asChild>
+        <Button type="button" variant="destructive" size="sm">
+          <Trash2 />
+          Delete
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this recipe?</AlertDialogTitle>
+          <AlertDialogDescription>
+            &ldquo;{title}&rdquo; and its ingredients, steps and tags will be removed. This cannot
+            be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Keep recipe</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={pending}
+            onClick={(event) => {
+              event.preventDefault();
+              confirmDelete();
+            }}
+          >
+            {pending ? "Deleting…" : "Delete recipe"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

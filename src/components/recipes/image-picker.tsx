@@ -127,7 +127,6 @@ export function ImagePicker({
         ref={inputRef}
         id={id}
         type="file"
-        name="image"
         accept={RECIPE_IMAGE_TYPES.join(",")}
         onChange={handleChange}
         aria-invalid={messageId ? true : undefined}
@@ -148,7 +147,6 @@ export function ImagePicker({
         <div className="flex items-center gap-2">
           <Checkbox
             id={`${id}-remove`}
-            name="removeImage"
             checked={removeCurrent}
             onCheckedChange={(checked) => onRemoveCurrentChange(checked === true)}
           />

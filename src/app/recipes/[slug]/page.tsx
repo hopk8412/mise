@@ -46,6 +46,7 @@ function Fact({ icon, label, children }: { icon: ReactNode; label: string; child
 function Source({ name, url }: { name: string | null; url: string | null }) {
   const link = parseHttpUrl(url);
   if (!link && !name) return null;
+  const host = link?.hostname.replace(/^www\./, "");
 
   return (
     <p className="text-muted-foreground text-sm">
@@ -54,10 +55,10 @@ function Source({ name, url }: { name: string | null; url: string | null }) {
         <a
           href={link.href}
           target="_blank"
-          rel="nofollow noopener noreferrer"
+          rel="nofollow ugc noopener noreferrer"
           className="text-foreground inline-flex items-center gap-1 underline underline-offset-4"
         >
-          {name ?? link.hostname.replace(/^www\./, "")}
+          {name ? `${name} (${host})` : host}
           <ExternalLink className="size-3.5" aria-hidden="true" />
           <span className="sr-only">(opens in a new tab)</span>
         </a>
