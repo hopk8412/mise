@@ -32,6 +32,7 @@ model User {
 
   sessions Session[]
   accounts Account[]
+  recipes  Recipe[]
 
   @@map("user")
 }
@@ -84,4 +85,88 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Recipes
+// ---------------------------------------------------------------------------
+
+enum RecipeStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model Recipe {
+  id          String       @id @default(cuid())
+  // Derived from the title plus a random suffix when the recipe is created and
+  // never changed afterwards, so links keep working when a title is edited.
+  slug        String       @unique
+  title       String
+  description String?
+  servings    Int?
+  prepMinutes Int?
+  cookMinutes Int?
+  sourceName  String?
+  sourceUrl   String?
+  // Storage key of the uploaded photo, for example "recipes/<uuid>.webp".
+  imageKey    String?
+  status      RecipeStatus @default(DRAFT)
+  // Set when the recipe is first published, cleared when it goes back to draft.
+  publishedAt DateTime?
+  authorId    String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  author      User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  ingredients Ingredient[]
+  steps       Step[]
+  tags        RecipeTag[]
+
+  @@index([authorId])
+  @@index([status, publishedAt])
+}
+
+model Ingredient {
+  id       String  @id @default(cuid())
+  recipeId String
+  // Zero-based display order.
+  position Int
+  quantity String?
+  unit     String?
+  name     String
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@index([recipeId, position])
+}
+
+model Step {
+  id       String @id @default(cuid())
+  recipeId String
+  // Zero-based display order.
+  position Int
+  text     String
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@index([recipeId, position])
+}
+
+model Tag {
+  id   String @id @default(cuid())
+  // Lowercase and trimmed.
+  name String @unique
+
+  recipes RecipeTag[]
+}
+
+model RecipeTag {
+  recipeId String
+  tagId    String
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([recipeId, tagId])
+  @@index([tagId])
 }
