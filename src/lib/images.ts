@@ -4,10 +4,41 @@ import sharp from "sharp";
 
 import { RECIPE_IMAGE_MAX_BYTES } from "@/lib/validation/recipe";
 
-// Decoding allocates width x height x channels, so the pixel count is capped well below
-// anything a 5 MB file could legitimately hold, and each side is capped for display sanity.
-const MAX_INPUT_PIXELS = 40_000_000;
+// Decoding and rotating allocate width x height x channels x bytes per channel, and a small
+// file can describe a very large image. The pixel count is capped at what a 24 megapixel
+// camera produces, and each side is capped for display sanity.
+const MAX_INPUT_PIXELS = 25_000_000;
 export const IMAGE_MAX_DIMENSION = 8000;
+
+// libvips keeps its own operation cache and spreads one image across several threads. Both
+// multiply memory use, so they are turned down for a process that handles many users' uploads.
+sharp.cache(false);
+sharp.concurrency(1);
+
+// Re-encoding a large image takes hundreds of megabytes briefly, so only one runs at a time
+// and only a few uploads may wait. Anything beyond that is refused rather than queued without
+// bound.
+const MAX_CONCURRENT_REENCODES = 1;
+const MAX_WAITING_REENCODES = 10;
+let activeReencodes = 0;
+const waitingReencodes: Array<() => void> = [];
+
+async function acquireReencodeSlot(): Promise<boolean> {
+  if (activeReencodes < MAX_CONCURRENT_REENCODES) {
+    activeReencodes++;
+    return true;
+  }
+  if (waitingReencodes.length >= MAX_WAITING_REENCODES) return false;
+  // A released slot is handed straight to the next waiter, so the active count stays put.
+  await new Promise<void>((resolve) => waitingReencodes.push(resolve));
+  return true;
+}
+
+function releaseReencodeSlot(): void {
+  const next = waitingReencodes.shift();
+  if (next) next();
+  else activeReencodes--;
+}
 
 export type ImageKind = {
   contentType: "image/jpeg" | "image/png" | "image/webp";
@@ -70,7 +101,8 @@ export type ImageCheck =
   | { ok: false; error: string };
 
 export const IMAGE_TYPE_ERROR = "Choose a JPEG, PNG or WebP image.";
-export const IMAGE_DIMENSION_ERROR = `The image must be ${IMAGE_MAX_DIMENSION} pixels or smaller on each side.`;
+export const IMAGE_DIMENSION_ERROR = `This image is too large. It can be at most ${IMAGE_MAX_DIMENSION} pixels on a side and ${MAX_INPUT_PIXELS / 1_000_000} megapixels in total.`;
+export const IMAGE_BUSY_ERROR = "Image processing is busy. Try again in a moment.";
 export const IMAGE_UNREADABLE_ERROR = "This image could not be read.";
 export const IMAGE_SIZE_ERROR = `The image must be ${RECIPE_IMAGE_MAX_BYTES / (1024 * 1024)} MB or smaller.`;
 
@@ -85,7 +117,11 @@ async function reencode(bytes: Uint8Array, kind: ImageKind): Promise<ImageCheck>
 
     const { width, height } = await input().metadata();
     if (!width || !height) return { ok: false, error: IMAGE_UNREADABLE_ERROR };
-    if (width > IMAGE_MAX_DIMENSION || height > IMAGE_MAX_DIMENSION) {
+    if (
+      width > IMAGE_MAX_DIMENSION ||
+      height > IMAGE_MAX_DIMENSION ||
+      width * height > MAX_INPUT_PIXELS
+    ) {
       return { ok: false, error: IMAGE_DIMENSION_ERROR };
     }
 
@@ -118,5 +154,10 @@ export async function checkImageUpload(file: File): Promise<ImageCheck> {
 
   const kind = sniffImage(bytes);
   if (!kind) return { ok: false, error: IMAGE_TYPE_ERROR };
-  return reencode(bytes, kind);
+  if (!(await acquireReencodeSlot())) return { ok: false, error: IMAGE_BUSY_ERROR };
+  try {
+    return await reencode(bytes, kind);
+  } finally {
+    releaseReencodeSlot();
+  }
 }

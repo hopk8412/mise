@@ -57,12 +57,15 @@ const tagNames = {
  * lookup as a slug that matches nothing. canViewRecipe / canEditRecipe still decide afterwards.
  */
 function visibleTo(slug: string, viewer: Viewer | null): Prisma.RecipeWhereInput {
+  // A viewer without an id is treated as signed out, so an undefined authorId can never reach
+  // the query (Prisma ignores an undefined filter, which would match every author).
+  if (!viewer || !viewer.id) return { slug, status: "PUBLISHED" };
   if (isAdmin(viewer)) return { slug };
-  if (!viewer) return { slug, status: "PUBLISHED" };
   return { slug, OR: [{ status: "PUBLISHED" }, { authorId: viewer.id }] };
 }
 
-function editableBy(slug: string, viewer: Viewer): Prisma.RecipeWhereInput {
+function editableBy(slug: string, viewer: Viewer): Prisma.RecipeWhereInput | null {
+  if (!viewer.id) return null;
   return isAdmin(viewer) ? { slug } : { slug, authorId: viewer.id };
 }
 
@@ -115,8 +118,10 @@ export async function getRecipeForEdit(
   slug: string,
   viewer: Viewer,
 ): Promise<{ id: string; slug: string; values: RecipeInput; imageUrl: string | null } | null> {
+  const where = editableBy(slug, viewer);
+  if (!where) return null;
   const recipe = await prisma.recipe.findFirst({
-    where: editableBy(slug, viewer),
+    where,
     include: { ingredients: byPosition, steps: byPosition, tags: tagNames },
   });
   if (!recipe || !canEditRecipe(viewer, recipe)) return null;

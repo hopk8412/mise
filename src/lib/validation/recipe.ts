@@ -21,7 +21,7 @@ export const RECIPE_LIMITS = {
 // PostgreSQL text columns cannot hold NUL characters; reject them here so they surface as a
 // field error instead of a failed insert. Bidirectional control characters are rejected too:
 // they make text display in a different order than it is stored.
-const UNSUPPORTED_CHARACTERS = /[\u0000‪-‮⁦-⁩]/;
+const UNSUPPORTED_CHARACTERS = /[\u0000\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
 const noNul = (value: string) => !UNSUPPORTED_CHARACTERS.test(value);
 const NUL_MESSAGE = "Remove any unsupported characters, such as text direction controls.";
 
