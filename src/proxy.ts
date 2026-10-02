@@ -19,5 +19,5 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   // Every route that requires a session. Add new ones here as they are built.
-  matcher: ["/my-recipes/:path*"],
+  matcher: ["/my-recipes/:path*", "/recipes/new", "/recipes/:slug/edit"],
 };
