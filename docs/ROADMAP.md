@@ -19,7 +19,7 @@ comes next.
 |---|---|---|---|
 | 0 | Scaffold and Docker foundation | Complete | 2026-09-12 |
 | 1 | Authentication | Complete | 2026-10-01 |
-| 2 | Recipe CRUD | Not started | — |
+| 2 | Recipe CRUD | Complete | 2026-10-02 |
 | 3 | Browse and search | Not started | — |
 | 4 | Favorites | Not started | — |
 | 5 | Ratings | Not started | — |
@@ -147,23 +147,72 @@ comes next.
 
 ### Tasks
 
-- [ ] Full Prisma schema: `Recipe`, `Ingredient`, `Step`, `Tag`, `RecipeTag`
-- [ ] Zod schemas shared by the client form and the server action
-- [ ] Create and edit forms with dynamic ingredient and step rows
-- [ ] Tag input, source attribution, draft/publish control
-- [ ] `src/lib/storage.ts` — storage interface plus local-disk implementation
-- [ ] Image upload with type and size validation; `GET /api/uploads/[...path]`
-- [ ] Recipe detail page and `/my-recipes`
-- [ ] Authorization: author or admin may edit and delete
+- [x] Full Prisma schema: `Recipe`, `Ingredient`, `Step`, `Tag`, `RecipeTag`
+- [x] Zod schemas shared by the client form and the server action
+- [x] Create and edit forms with dynamic ingredient and step rows
+- [x] Tag input, source attribution, draft/publish control
+- [x] `src/lib/storage.ts` — storage interface plus local-disk implementation
+- [x] Image upload with type and size validation; `GET /api/uploads/[...path]`
+- [x] Recipe detail page and `/my-recipes`
+- [x] Authorization: author or admin may edit and delete
 
 ### Verification
 
-- [ ] Create a draft; confirm it is invisible to other users and to signed-out visitors
-- [ ] Publish it; confirm it becomes visible
-- [ ] Edit it, including reordering ingredients and steps
-- [ ] Upload an image; confirm it survives `docker compose restart`
-- [ ] Delete it; confirm ingredients, steps, and tag links go with it
-- [ ] Attempt to edit someone else's recipe; confirm it is refused
+- [x] Create a draft; confirm it is invisible to other users and to signed-out visitors
+- [x] Publish it; confirm it becomes visible
+- [x] Edit it, including reordering ingredients and steps
+- [x] Upload an image; confirm it survives `docker compose restart`
+- [x] Delete it; confirm ingredients, steps, and tag links go with it
+- [x] Attempt to edit someone else's recipe; confirm it is refused
+
+### Decisions made during this phase
+
+- **The form posts JSON, not indexed field names.** `FormData` carries `data`
+  (the `RecipeInput` as JSON), an optional `image` file, and `removeImage`.
+  `parseRecipeForm` in `src/lib/recipe-form.ts` checks the multipart shape (at
+  most 8 entries, only `image` may be a file), caps `data` at 1.5M characters,
+  and rejects over-long arrays **before** Zod runs. Zod 4 parses every array
+  element before `.max()` applies, so without the pre-check a 1 MB request
+  produced hundreds of thousands of issues and a 20 MB response.
+- **Refusals.** A recipe the viewer cannot see is `notFound()` everywhere —
+  pages, metadata and actions — so a hidden draft is indistinguishable from a
+  missing slug. A recipe the viewer can see but not edit gets a form error (update)
+  or a thrown error (delete, publish). `forbidden()` is not used: it needs
+  `experimental.authInterrupts`.
+- **Visibility is applied in the query** (`visibleTo` / `editableBy` in
+  `src/lib/recipes.ts`), so a hidden draft costs the same as a missing slug, and
+  `canViewRecipe` / `canEditRecipe` still run on the result.
+  `listOwnRecipes(viewerId)` returns drafts and must only be given the session
+  user's id.
+- **Slugs are permanent**: the title plus a six-character random suffix, set at
+  creation and never changed, so links survive a title edit and slugs cannot be
+  guessed.
+- **Tags are global**, stored lowercase, returned alphabetically, and never cleaned
+  up when unused. A draft's tags exist as rows, so Phase 3 must list only tags
+  attached to a published recipe.
+- **Every upload is re-encoded with `sharp`** after a magic-byte check (JPEG, PNG,
+  WebP only). Re-encoding strips EXIF, GPS, XMP and ICC metadata and any trailing
+  bytes. Limits: 5 MB, 8000 px a side, 25 megapixels. Re-encoding runs one at a
+  time behind a process-wide gate with up to 10 waiting; beyond that the upload
+  fails with "Image processing is busy". Peak memory for the worst case is about
+  600 MB and does not grow with concurrency. `sharp` is a direct dependency.
+- **Images are served from `GET /api/uploads/[...path]`** with `nosniff`, a
+  `default-src 'none'` CSP and immutable caching. Only `recipes/<uuid>.(jpg|png|webp)`
+  keys are served. A draft's image is readable by anyone who has its URL; the key is
+  a random UUID and is never listed.
+- **The server-action body limit is 7 MB** (`experimental.serverActions.bodySizeLimit`).
+- **`server-only`** guards `src/lib/recipes.ts`, `storage.ts` and `images.ts`, but
+  not `db.ts`: `prisma/seed.ts` imports it under plain `tsx`, where `server-only`
+  does not resolve.
+
+### Follow-ups recorded for later phases
+
+- Phase 3: list only tags on published recipes.
+- Phase 6: deleting a user cascades their recipes in the database but leaves their
+  image files on disk; delete the files too.
+- Phase 7: rate limits and per-user upload quotas on recipe creation and uploads, a
+  `mem_limit` on the app service, a `sharp` processing timeout, an `error.tsx`
+  boundary for failed publish or delete, and `npm audit` in CI.
 
 ---
 
@@ -179,7 +228,7 @@ comes next.
 - [ ] Prefix matching so partial words match
 - [ ] `src/lib/search.ts` — all raw SQL isolated here
 - [ ] Debounced search input with state reflected in the URL
-- [ ] Tag filter, empty states, and no-results states
+- [ ] Tag filter, empty states, and no-results states (list only tags attached to a published recipe)
 - [ ] Home page shows recent published recipes
 
 ### Verification
@@ -250,6 +299,7 @@ comes next.
 - [ ] `/admin/recipes` — every recipe including drafts
 - [ ] Admin edit, unpublish, single delete, and bulk delete behind confirmation
 - [ ] Admin actions re-check authorization server-side, not only in the layout
+- [ ] Deleting a user also deletes their recipes' image files
 
 ### Verification
 
@@ -272,7 +322,9 @@ comes next.
 - [ ] Accessibility: keyboard navigation, focus states, labels, contrast
 - [ ] Responsive layouts down to a phone width
 - [ ] Loading and error boundaries; a real 404
-- [ ] Rate limiting on the authentication endpoints
+- [ ] Rate limiting on the authentication endpoints, recipe creation, and image uploads
+- [ ] Per-user upload quota, a `mem_limit` on the app service, and a timeout on image processing
+- [ ] `npm audit` in CI (`sharp` and its codecs handle untrusted input)
 - [ ] Playwright suite: register and sign in, create-publish-edit, search, favorite, rate, admin
 - [ ] `compose.prod.yaml` override running the production image
 - [ ] `docs/ARCHITECTURE.md`, `docs/DATA-MODEL.md`, `docs/OPERATIONS.md`

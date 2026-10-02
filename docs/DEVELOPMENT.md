@@ -154,6 +154,37 @@ works but is deprecated. Per the Next docs, the proxy runs separately from rende
 so it is used only for cheap optimistic redirects — real authorization checks belong in
 layouts, pages, and server actions.
 
+### Working in a second checkout (git worktree)
+
+Compose mounts only the main checkout, so a `git worktree` beside it is checked on
+the host instead. Create it next to the repository, not inside it — `tsconfig.json`
+and ESLint would otherwise pick up its files:
+
+```bash
+git worktree add ../mise.wt-<name> -b <branch> main
+```
+
+Then, from inside the worktree:
+
+```bash
+cmd //c "mklink /J node_modules C:\path\to\mise\node_modules"   # reuse the host install
+cp ../mise/.env .env
+npx prisma generate && npx next typegen
+npx tsc --noEmit && npx eslint
+```
+
+- `node_modules` is a junction into the main checkout. Remove it with
+  `cmd //c rmdir node_modules` **before** `git worktree remove`, and never with
+  `rm -rf`, which follows the link and empties the main checkout's copy.
+- Never run `npm install` in a worktree. Change dependencies in a throwaway Linux
+  container so the lockfile stays Linux-consistent:
+  `docker run --rm -v "<worktree>:/app" -w /app node:24-alpine npm install <pkg> --package-lock-only`.
+- To run the app from a worktree, use `npx next dev --webpack --port 3101` with
+  `BETTER_AUTH_URL=http://localhost:3101`. Turbopack refuses to follow the
+  `node_modules` junction ("points out of the filesystem root").
+- Cookies are shared across ports on `localhost`, so signing in on one dev server
+  signs you in on every other one that uses the same database and secret.
+
 ## Before you commit
 
 ```bash
