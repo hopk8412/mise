@@ -1,3 +1,5 @@
+import "server-only";
+
 import { canEditRecipe, canViewRecipe } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import type { Session } from "@/lib/session";
@@ -128,10 +130,14 @@ export async function getRecipeForEdit(
   };
 }
 
-/** Everything one person has written, drafts included, most recently changed first. */
-export async function listRecipesByAuthor(authorId: string): Promise<RecipeSummary[]> {
+/**
+ * The signed-in user's own recipes, drafts included, most recently changed first.
+ * Performs no viewer check of its own: pass only the session user's id, never an id
+ * taken from a URL or form.
+ */
+export async function listOwnRecipes(viewerId: string): Promise<RecipeSummary[]> {
   const recipes = await prisma.recipe.findMany({
-    where: { authorId },
+    where: { authorId: viewerId },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     include: { tags: tagNames },
   });

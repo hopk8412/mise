@@ -7,57 +7,14 @@ import type { Prisma, RecipeStatus } from "@/generated/prisma/client";
 import { canEditRecipe, canViewRecipe } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/session";
+import { parseRecipeForm, type RecipeFormState } from "@/lib/recipe-form";
 import { createSlug } from "@/lib/slug";
-import { recipeInputSchema, type RecipeData } from "@/lib/validation/recipe";
+import type { RecipeData } from "@/lib/validation/recipe";
 
-export type RecipeFormState = {
-  /** Problems with individual fields, keyed by dotted path: "title", "ingredients.0.name", "steps", "tags.2". */
-  fieldErrors?: Record<string, string[] | undefined>;
-  /** A problem with the submission as a whole. */
-  formError?: string;
-};
+export type { RecipeFormState };
 
 const SAVE_FAILED = "Saving the recipe failed. Try again in a moment.";
-const CHECK_FORM = "Check the highlighted fields and try again.";
 const MAX_ATTEMPTS = 5;
-
-type ParsedForm = { ok: true; data: RecipeData } | { ok: false; state: RecipeFormState };
-
-/** Reads the `data` field of the recipe form and validates it. Never throws on bad input. */
-function parseRecipeForm(formData: FormData): ParsedForm {
-  const raw = formData.get("data");
-  if (typeof raw !== "string") {
-    return { ok: false, state: { formError: "The recipe could not be read. Reload the page and try again." } };
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    return { ok: false, state: { formError: "The recipe could not be read. Reload the page and try again." } };
-  }
-
-  const parsed = recipeInputSchema.safeParse(json);
-  if (parsed.success) return { ok: true, data: parsed.data };
-
-  const fieldErrors: Record<string, string[]> = {};
-  let formError: string | undefined;
-  for (const issue of parsed.error.issues) {
-    const key = issue.path.map(String).join(".");
-    if (!key) {
-      formError = issue.message;
-      continue;
-    }
-    (fieldErrors[key] ??= []).push(issue.message);
-  }
-  return {
-    ok: false,
-    state: {
-      fieldErrors,
-      formError: formError ?? (Object.keys(fieldErrors).length > 0 ? CHECK_FORM : undefined),
-    },
-  };
-}
 
 function errorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
