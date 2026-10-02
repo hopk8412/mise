@@ -85,6 +85,22 @@ the team.
 The lead plans, coordinates, merges, and verifies. It does not write application code
 itself.
 
+Practical notes from running it:
+
+- Write the phase's API contract (schema, action and query signatures) before
+  spawning anyone, and land the data-layer task first; UI tasks then run in parallel
+  against merged code instead of a moving branch.
+- Teammates create worktrees beside the repo (`../mise.wt-<name>`) and follow the
+  worktree section of `docs/DEVELOPMENT.md` (junction `node_modules`, `next dev
+  --webpack`, never `rm -rf` the junction). Their shell does not keep `cd` between
+  calls, so every command starts with `cd <worktree> &&`.
+- The `adversary` cannot send messages; its final report is its verdict. The lead
+  starts each review and relays the result. A second adversary instance can review
+  another branch in parallel.
+- Open PRs from the exact approved commit — no rebase — and squash-merge with
+  `--match-head-commit <full sha>` so nothing unreviewed lands.
+- `gh` is at `"/c/Program Files/GitHub CLI/gh.exe"` if it is not on the shell's PATH.
+
 ## Agent team task board
 
 When working as an agent teammate, track work in `tasks.json` through
