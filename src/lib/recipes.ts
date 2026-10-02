@@ -1,6 +1,7 @@
 import "server-only";
 
-import { canEditRecipe, canViewRecipe } from "@/lib/authz";
+import type { Prisma } from "@/generated/prisma/client";
+import { canEditRecipe, canViewRecipe, isAdmin } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import type { Session } from "@/lib/session";
 import type { RecipeInput } from "@/lib/validation/recipe";
@@ -52,6 +53,20 @@ const tagNames = {
 } as const;
 
 /**
+ * The visibility rule as a query condition, so a draft the viewer cannot see costs the same
+ * lookup as a slug that matches nothing. canViewRecipe / canEditRecipe still decide afterwards.
+ */
+function visibleTo(slug: string, viewer: Viewer | null): Prisma.RecipeWhereInput {
+  if (isAdmin(viewer)) return { slug };
+  if (!viewer) return { slug, status: "PUBLISHED" };
+  return { slug, OR: [{ status: "PUBLISHED" }, { authorId: viewer.id }] };
+}
+
+function editableBy(slug: string, viewer: Viewer): Prisma.RecipeWhereInput {
+  return isAdmin(viewer) ? { slug } : { slug, authorId: viewer.id };
+}
+
+/**
  * A recipe for display. Returns null both when the slug matches nothing and when
  * the viewer may not see the recipe, so a draft cannot be told apart from a missing page.
  */
@@ -59,8 +74,8 @@ export async function getRecipeForViewer(
   slug: string,
   viewer: Viewer | null,
 ): Promise<RecipeDetail | null> {
-  const recipe = await prisma.recipe.findUnique({
-    where: { slug },
+  const recipe = await prisma.recipe.findFirst({
+    where: visibleTo(slug, viewer),
     include: {
       author: { select: { id: true, name: true } },
       ingredients: byPosition,
@@ -100,8 +115,8 @@ export async function getRecipeForEdit(
   slug: string,
   viewer: Viewer,
 ): Promise<{ id: string; slug: string; values: RecipeInput; imageUrl: string | null } | null> {
-  const recipe = await prisma.recipe.findUnique({
-    where: { slug },
+  const recipe = await prisma.recipe.findFirst({
+    where: editableBy(slug, viewer),
     include: { ingredients: byPosition, steps: byPosition, tags: tagNames },
   });
   if (!recipe || !canEditRecipe(viewer, recipe)) return null;
