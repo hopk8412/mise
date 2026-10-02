@@ -16,9 +16,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-mise}
     ports:
       # Published so host tooling (prisma studio, psql, a GUI client) can reach
-      # it. 5432 is usually taken by a local PostgreSQL install; override with
-      # POSTGRES_HOST_PORT if 5433 is busy too. The app does not use this port.
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+      # it. Not 5432 (a local PostgreSQL install usually holds that) and not
+      # 5433/5434 (the recipe-roost stack next door publishes those). Override
+      # with POSTGRES_HOST_PORT. The app container does not use this port.
+      - "${POSTGRES_HOST_PORT:-5435}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

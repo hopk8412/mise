@@ -75,20 +75,23 @@ docker compose exec app npx prisma migrate reset    # wipe and rebuild from migr
 
 ### Connecting with a database client
 
-PostgreSQL is published on the host at port **5433** (not 5432 — a local PostgreSQL
-install usually holds that one, and the previous project in this directory uses 5433
-and 5434 on its own). Change it with `POSTGRES_HOST_PORT` in `.env`.
+PostgreSQL is published on the host at port **5435**. Two ports were already
+spoken for: 5432 by a local PostgreSQL install, and 5433/5434 by the `recipe-roost`
+stack in the neighbouring directory. Change it with `POSTGRES_HOST_PORT` in `.env`.
 
 ```
 host     localhost
-port     5433
+port     5435
 database mise
 user     mise
 password mise
 ```
 
+`recipe-roost` also publishes 3000 when its `full` profile is running. If you need
+both stacks up at once, set `APP_PORT` in `.env` to something else.
+
 Prisma Studio, run from the host, uses the `DATABASE_URL` in your `.env`, which
-points at `localhost:5433`:
+points at `localhost:5435`:
 
 ```bash
 npm run db:studio
@@ -112,7 +115,7 @@ that only appears in a production build, that difference is the first thing to c
 
 `compose.yaml` sets the app's environment explicitly, and those values win over the
 bind-mounted `.env` file. This is deliberate and it matters for one variable in
-particular: `DATABASE_URL` in `.env` points at `localhost:5433` for host-side tooling,
+particular: `DATABASE_URL` in `.env` points at `localhost:5435` for host-side tooling,
 while the container needs `db:5432`. Compose supplies the latter.
 
 The `.env` file *is* read by Compose for `${...}` substitution, so changing
