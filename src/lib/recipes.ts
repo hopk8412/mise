@@ -1,6 +1,7 @@
 import "server-only";
 
-import { canEditRecipe, canViewRecipe } from "@/lib/authz";
+import type { Prisma } from "@/generated/prisma/client";
+import { canEditRecipe, canViewRecipe, isAdmin } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import type { Session } from "@/lib/session";
 import type { RecipeInput } from "@/lib/validation/recipe";
@@ -52,6 +53,23 @@ const tagNames = {
 } as const;
 
 /**
+ * The visibility rule as a query condition, so a draft the viewer cannot see costs the same
+ * lookup as a slug that matches nothing. canViewRecipe / canEditRecipe still decide afterwards.
+ */
+function visibleTo(slug: string, viewer: Viewer | null): Prisma.RecipeWhereInput {
+  // A viewer without an id is treated as signed out, so an undefined authorId can never reach
+  // the query (Prisma ignores an undefined filter, which would match every author).
+  if (!viewer || !viewer.id) return { slug, status: "PUBLISHED" };
+  if (isAdmin(viewer)) return { slug };
+  return { slug, OR: [{ status: "PUBLISHED" }, { authorId: viewer.id }] };
+}
+
+function editableBy(slug: string, viewer: Viewer): Prisma.RecipeWhereInput | null {
+  if (!viewer.id) return null;
+  return isAdmin(viewer) ? { slug } : { slug, authorId: viewer.id };
+}
+
+/**
  * A recipe for display. Returns null both when the slug matches nothing and when
  * the viewer may not see the recipe, so a draft cannot be told apart from a missing page.
  */
@@ -59,8 +77,8 @@ export async function getRecipeForViewer(
   slug: string,
   viewer: Viewer | null,
 ): Promise<RecipeDetail | null> {
-  const recipe = await prisma.recipe.findUnique({
-    where: { slug },
+  const recipe = await prisma.recipe.findFirst({
+    where: visibleTo(slug, viewer),
     include: {
       author: { select: { id: true, name: true } },
       ingredients: byPosition,
@@ -100,8 +118,10 @@ export async function getRecipeForEdit(
   slug: string,
   viewer: Viewer,
 ): Promise<{ id: string; slug: string; values: RecipeInput; imageUrl: string | null } | null> {
-  const recipe = await prisma.recipe.findUnique({
-    where: { slug },
+  const where = editableBy(slug, viewer);
+  if (!where) return null;
+  const recipe = await prisma.recipe.findFirst({
+    where,
     include: { ingredients: byPosition, steps: byPosition, tags: tagNames },
   });
   if (!recipe || !canEditRecipe(viewer, recipe)) return null;

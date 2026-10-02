@@ -29,7 +29,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pat
   }
   if (!file) return notFound();
 
-  return new Response(Buffer.from(file.bytes), {
+  return new Response(file.bytes as BodyInit, {
     headers: {
       "Content-Type": file.contentType,
       "Content-Length": String(file.bytes.byteLength),
