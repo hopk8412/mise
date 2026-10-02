@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import Link from "next/link";
 
 import { UserMenu } from "@/components/user-menu";
@@ -15,7 +16,15 @@ export async function SiteHeader() {
         </Link>
         <nav aria-label="Account" className="flex items-center gap-2">
           {session ? (
-            <UserMenu name={session.user.name} email={session.user.email} />
+            <>
+              <Button asChild variant="outline" size="sm">
+                <Link href="/recipes/new">
+                  <Plus />
+                  New recipe
+                </Link>
+              </Button>
+              <UserMenu name={session.user.name} email={session.user.email} />
+            </>
           ) : (
             <>
               <Button asChild variant="ghost" size="sm">
